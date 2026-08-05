@@ -33,6 +33,10 @@ DEFAULT_CORPUS = Path(
 
 DB_PATH = Path(os.environ.get("ADICC_DB", str(DEFAULT_DB))).expanduser().resolve()
 CORPUS_ROOT = Path(os.environ.get("ADICC_CORPUS", str(DEFAULT_CORPUS))).expanduser().resolve()
+PREVIEW_DIR = Path(
+    os.environ.get("ADICC_PREVIEWS", str(BACKEND_DIR / "data" / "previews"))
+).expanduser().resolve()
+CACHE_HEADERS = {"Cache-Control": "public, max-age=604800, immutable"}
 
 OPENAI_API_KEY = (os.environ.get("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip()
@@ -484,7 +488,8 @@ def finish_for_room(body: FinishForRoomRequest) -> dict[str, Any]:
 def _lookup_doc(con: sqlite3.Connection, chunk_id: int) -> sqlite3.Row:
     row = con.execute(
         """
-        SELECT c.id, c.text, d.path, d.rel_path, p.page_no, r.bbox AS bbox
+        SELECT c.id, c.text, c.page_id, d.path, d.rel_path, p.page_no, r.bbox AS bbox,
+               c.sheet_id, c.sheet_title
         FROM chunks c
         JOIN documents d ON d.id = c.doc_id
         JOIN pages p ON p.id = c.page_id
@@ -544,6 +549,14 @@ def citation_file(chunk_id: int, download: bool = False):
 def citation_image(chunk_id: int):
     with connect() as con:
         row = _lookup_doc(con, chunk_id)
+
+    # Fast path for deploy: prebuilt JPEG page previews (no PDF corpus required).
+    page_id = row["page_id"] if "page_id" in row.keys() else None
+    if page_id is not None:
+        cached = PREVIEW_DIR / f"{int(page_id)}.jpg"
+        if cached.is_file() and cached.stat().st_size > 500:
+            return FileResponse(cached, media_type="image/jpeg", headers=CACHE_HEADERS)
+
     path = resolve_source_path(row["path"], row["rel_path"])
     if not path or path.suffix.lower() != ".pdf":
         raise HTTPException(404, "No PDF page preview for this citation")
@@ -585,12 +598,20 @@ def citation_image(chunk_id: int):
             except Exception:
                 pass
 
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
-        png = pix.tobytes("png")
+        # Smaller raster for faster network load
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.15, 1.15), alpha=False)
+        jpg = pix.tobytes("jpeg", jpg_quality=70)
         doc.close()
+        # Warm local cache for subsequent requests
+        if page_id is not None:
+            try:
+                PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+                (PREVIEW_DIR / f"{int(page_id)}.jpg").write_bytes(jpg)
+            except OSError:
+                pass
     except Exception as e:
         raise HTTPException(500, f"Could not render page: {e}") from e
-    return Response(png, media_type="image/png")
+    return Response(jpg, media_type="image/jpeg", headers=CACHE_HEADERS)
 
 
 @app.get("/file")
