@@ -1,0 +1,29 @@
+# Render blueprint — ADICC Volume 4 RAG API
+# https://docs.render.com/infrastructure-as-code
+#
+# Knowledge base: data/adicc.db (bundled in the Docker image).
+# Set OPENAI_* env values in the Render Dashboard (or via sync: false below).
+
+services:
+  - type: web
+    name: adicc-rag
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ADICC_DB
+        value: /app/data/adicc.db
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_CHAT_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_VISION_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-large
+      - key: EMBEDDING_DIMENSIONS
+        value: "1536"
+      - key: PYTHONUNBUFFERED
+        value: "1"

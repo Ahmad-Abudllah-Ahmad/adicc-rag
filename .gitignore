@@ -1,0 +1,8 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+# Keep data/adicc.db for Render image builds (tracked via Git LFS).
+!data/
+!data/adicc.db

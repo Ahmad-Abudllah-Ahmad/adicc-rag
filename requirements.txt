@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pymupdf>=1.24
+pydantic>=2
+openai>=1.40
+python-dotenv>=1.0
