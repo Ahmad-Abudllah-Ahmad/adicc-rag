@@ -1,14 +1,33 @@
 # ADICC Volume 4 RAG API
 
-Serves Drawings Q&A from the local SQLite knowledge base (`adicc.db`).
+FastAPI retrieval + OpenAI chat over the SQLite knowledge base (`data/adicc.db`).
+
+## Live (Render)
+
+- Service: `https://adicc-rag.onrender.com`
+- Health: `https://adicc-rag.onrender.com/health`
+- Dashboard: `https://dashboard.render.com/web/srv-d9peb56417fc73dnt6e0`
+- Repo: `https://github.com/Ahmad-Abudllah-Ahmad/adicc-rag`
+
+Frontend (`https://adicc.onrender.com`) uses build env `VITE_RAG_URL=https://adicc-rag.onrender.com`.
+
+## Local
 
 ```bash
 cd backend
-export ADICC_DB="../adicc.db"
-# optional — PDF corpus for citation open / page preview
-export ADICC_CORPUS="$HOME/Downloads/VOLUME 4 - DRAWINGS"
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # set OPENAI_API_KEY
+# ADICC_DB should point at ./data/adicc.db
+uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-Health: http://127.0.0.1:8001/health  
-Vite proxies `/rag` → this service (see `opentakeoff/web/vite.config.js`).
+OpenTakeoff Vite proxies `/rag` → this service when `VITE_RAG_URL` is unset.
+
+## Knowledge base
+
+| Environment | Path |
+|-------------|------|
+| Local | `backend/data/adicc.db` (hard-linked to workspace `adicc.db`) |
+| Render / Docker | `/app/data/adicc.db` via `ADICC_DB` |
