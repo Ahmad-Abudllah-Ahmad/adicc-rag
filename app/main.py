@@ -44,18 +44,21 @@ OPENAI_EMBEDDING_MODEL = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embeddin
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1536"))
 MAX_CITATIONS = 2
 
-SYSTEM_PROMPT = """You are the ADICC Volume 4 drawings assistant.
-Answer ONLY from the provided source excerpts.
-Write a clear, professional response for a construction takeoff chat.
+SYSTEM_PROMPT = """You are the ADICC Volume 4 drawings assistant for professional construction takeoff.
+
+Answer priority (strict):
+1. First use source excerpts (RAG corpus) when they contain accurate, specific facts that answer the question (specifications, notes, schedules, stated quantities).
+2. If the excerpts are missing, vague, contradictory, or do not answer the question, use AUTHORITATIVE LIVE DETECTIONS / live project context for masks, doors, windows, curtain/finish marks, type marks, and takeoff quantities.
+3. Prefer RAG when it is accurate; prefer live detections when RAG cannot answer cleanly. Never invent numbers.
+4. Never say a door/window/mask total is unknown when live detections list that sheet.
 
 Formatting rules (strict):
 - Start with a short bold title line using this exact pattern: TITLE: Your Title Here
 - Then use section headings with this exact pattern: SECTION: Heading
 - Under each section write plain sentences only.
 - Do not use markdown symbols, bullets, dashes as bullets, asterisks, hashes, backticks, emojis, or special characters for decoration.
-- Do not invent sheet numbers or finishes that are not in the sources.
-- If sources are insufficient, say so plainly and set confidence low.
-- Keep the answer concise and well structured.
+- If both sources and live context are insufficient, say so plainly and set confidence low.
+- Keep the answer concise, confident, and professional.
 """
 
 app = FastAPI(title="ADICC Volume 4 RAG", version="1.1.0")
@@ -69,6 +72,8 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
+    # Optional live takeoff / plan-symbol context from the open canvas (masks, doors, etc.).
+    project_context: str | None = None
 
 
 class FinishForRoomRequest(BaseModel):
@@ -244,8 +249,13 @@ def build_fallback_answer(question: str, rows: list[sqlite3.Row]) -> tuple[str, 
     return "\n".join(lines), False
 
 
-def openai_answer(question: str, rows: list[sqlite3.Row]) -> tuple[str, bool]:
-    if not rows:
+def openai_answer(
+    question: str,
+    rows: list[sqlite3.Row],
+    project_context: str | None = None,
+) -> tuple[str, bool]:
+    live = (project_context or "").strip()
+    if not rows and not live:
         return build_fallback_answer(question, rows)
     if not OPENAI_API_KEY:
         return build_fallback_answer(question, rows)
@@ -262,10 +272,22 @@ def openai_answer(question: str, rows: list[sqlite3.Row]) -> tuple[str, bool]:
                 "text": (row["text"] or "")[:1200],
             }
         )
+    live_block = ""
+    if live:
+        # Cap size so chat stays responsive; prefer the head (sheet totals first).
+        live_block = (
+            "\n\nAUTHORITATIVE LIVE DETECTIONS (source of truth for door/window/mask counts):\n"
+            f"{live[:14000]}\n"
+        )
     user_prompt = (
         f"Question: {question.strip()}\n\n"
-        f"Source excerpts (JSON):\n{json.dumps(sources, ensure_ascii=False)}\n\n"
-        "Produce the structured answer now."
+        f"Source excerpts (JSON) — check these first for an accurate answer:\n"
+        f"{json.dumps(sources, ensure_ascii=False)}\n"
+        f"{live_block}\n"
+        "Produce the structured answer now. "
+        "If the source excerpts accurately answer the question, use them. "
+        "If they do not, answer from live detections when available. "
+        "Be professional and specific."
     )
     try:
         from openai import OpenAI
@@ -319,7 +341,7 @@ def query(body: QueryRequest) -> dict[str, Any]:
     with connect() as con:
         rows = search_chunks(con, body.query, limit=8)
     cite_rows = rows[:MAX_CITATIONS]
-    answer, abstained = openai_answer(body.query, rows)
+    answer, abstained = openai_answer(body.query, rows, body.project_context)
     citations = [citation_from_row(r) for r in cite_rows]
     return {
         "answer": answer,
